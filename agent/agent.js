@@ -42,7 +42,7 @@ async function coletarInformacoesDaMaquina() {
 }
 
 // URL do servidor central
-const servidorCentralURL = 'http://localhost:3000/receber-dados';
+const servidorCentralURL = 'http://localhost:3001/receber-dados';
 
 // Função para enviar os dados ao servidor central
 function enviarDadosParaServidorCentral(dadosDaMaquina) {
