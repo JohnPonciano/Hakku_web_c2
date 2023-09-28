@@ -21,9 +21,11 @@ function criarLinkGoogleMaps(locationData) {
 // Função para consultar o Wigle.net com base no BSSID e SSID da rede WiFi
 async function consultarWigle(bssid, ssid) {
   // Configurar a solicitação HTTP para o Wigle.net
+  let bssid_fix = bssid.trim()
+  let ssid_fix = ssid.trim()
   const config = {
     method: 'get',
-    url: `https://api.wigle.net/api/v2/network/search?netid=${bssid}&ssid=${ssid}`,
+    url: `https://api.wigle.net/api/v2/network/search?netid=${bssid_fix}&ssid=${ssid_fix}`,
     headers: {
       Authorization: `Basic ${wigleApiKey}`,
     },
@@ -51,4 +53,4 @@ async function consultarWigle(bssid, ssid) {
 }
 
 
-module.exports = { consultarWigle };
+module.exports = { consultarWigle, criarLinkGoogleMaps };

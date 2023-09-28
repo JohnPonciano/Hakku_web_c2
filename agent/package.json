@@ -1,9 +1,0 @@
-{
-  "dependencies": {
-    "axios": "^1.5.0",
-    "external-ip": "^2.3.1",
-    "node-geolocation": "^1.15.14",
-    "os": "^0.1.2",
-    "public-ip": "^6.0.1"
-  }
-}

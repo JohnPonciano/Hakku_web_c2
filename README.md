@@ -34,14 +34,16 @@
 
 Criar Dashboards
     
-    [ ] Login
-    [ ] Lista de maquinas
-    [ ] Detalhe das maquinas
+    [X] Login
+    [x] Lista de maquinas
+    [ ] Menus de opções
 
 Interface de Comando e Controle
 
     [ ] RevShell
     [ ] Printscreen
-
+    [X] Geolocalização
+    [X] Status Machine 
+    [ ] Agent Hibrido Windows/Linux
 
 

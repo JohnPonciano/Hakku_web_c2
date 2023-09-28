@@ -3,9 +3,7 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
-const { consultarWigle } = require('./geoserver'); // Importe a função consultarWigle do módulo geoserver.js
-const cron = require('node-cron');
-
+const { consultarWigle, criarLinkGoogleMaps } = require('./geoserver'); // Importe a função consultarWigle do módulo geoserver.js
 
 const app = express();
 const port = 3001;
@@ -13,8 +11,6 @@ const port = 3001;
 app.use(bodyParser.json());
 app.use(cors());
 
-const intervaloDeSolicitacao = 60 * 60 * 1000; // 1 hora em milissegundos
-const rateLimitMap = new Map();
 const cache = new Map();
 
 function bytesParaGB(bytes) {
@@ -29,41 +25,23 @@ async function consultarWigleComRetentativas(bssidRedeWiFi, ssidRedeWiFi) {
     return cache.get(cacheKey);
   }
 
-  // Verifica se uma solicitação para este BSSID e SSID já está em andamento
-  if (!rateLimitMap.has(cacheKey)) {
-    // Marca que a solicitação está em andamento para este BSSID e SSID
-    rateLimitMap.set(cacheKey, true);
+  try {
+    // Realiza a consulta no Wigle.net
+    const wigleResponse = await consultarWigle(bssidRedeWiFi, ssidRedeWiFi);
 
-    try {
-      // Realiza a consulta no Wigle.net
-      const wigleResponse = await consultarWigle(bssidRedeWiFi, ssidRedeWiFi);
+    if (wigleResponse) {
+      const wigleDetails = wigleResponse.wigleData;
 
-      if (wigleResponse) {
-        const wigleDetails = wigleResponse.wigleData;
+      // Armazena o resultado no cache
+      cache.set(cacheKey, wigleDetails);
 
-        // Armazena o resultado no cache
-        cache.set(cacheKey, wigleDetails);
-
-        // Remove o limite após a consulta para este BSSID e SSID
-        setTimeout(() => {
-          rateLimitMap.delete(cacheKey);
-        }, intervaloDeSolicitacao);
-
-        return wigleDetails;
-      } else {
-        console.error('Rede WiFi não encontrada no Wigle.net.');
-      }
-    } catch (error) {
-      console.error('Erro na consulta do Wigle.net:', error.message);
+      return wigleDetails;
+    } else {
+      console.error('Rede WiFi não encontrada no Wigle.net.');
     }
-  } else {
-    console.error('Solicitação já em andamento para este BSSID e SSID.');
+  } catch (error) {
+    console.error('Erro na consulta do Wigle.net:', error.message);
   }
-
-  // Se a consulta falhar ou já estiver em andamento, agende uma retentativa após 20 minutos
-  setTimeout(() => {
-    consultarWigleComRetentativas(bssidRedeWiFi, ssidRedeWiFi);
-  }, 20 * 60 * 1000); // 20 minutos em milissegundos
 
   return null; // Retorna nulo para indicar que a consulta será retentada
 }
@@ -74,43 +52,36 @@ app.post('/receber-dados', async (req, res) => {
 
   console.log('Novos dados recebidos:', newData);
 
-  // Verifica se a última solicitação foi feita há mais de 1 hora
-  const agora = new Date();
-  let fazerNovaSolicitacao = true;
-
-  if (newData.lastGeolocationRequest) {
-    const horaUltimaSolicitacao = new Date(newData.lastGeolocationRequest);
-
-    if (agora - horaUltimaSolicitacao < intervaloDeSolicitacao) {
-      fazerNovaSolicitacao = false;
-    }
-  }
-
-  // Consulta no Wigle.net somente se for necessário e respeita o controle de taxa
-  if (fazerNovaSolicitacao) {
+  // Realize a consulta ao Wigle.net apenas se você solicitar manualmente
+  if (newData.consultarGeolocalizacao) {
     const bssidRedeWiFi = newData.bssidRedeWiFi.trim();
     const ssidRedeWiFi = newData.ssidRedeWiFi.trim();
-    const wigleDetails = await consultarWigleComRetentativas(bssidRedeWiFi, ssidRedeWiFi);
 
-    if (wigleDetails) {
-      // Atualize os dados com base na consulta do Wigle.net
-      newData.lastGeolocationRequest = new Date().toISOString();
-      newData.country = wigleDetails.country;
-      newData.region = wigleDetails.region;
-      newData.road = wigleDetails.road;
-      newData.city = wigleDetails.city;
-      newData.housenumber = wigleDetails.housenumber;
-      newData.postalcode = wigleDetails.postalcode;
-      newData.googleMapsLink = wigleDetails.googleMapsLink;
+    try {
+      // Realize a consulta ao Wigle.net
+      const wigleDetails = await consultarWigleComRetentativas(bssidRedeWiFi, ssidRedeWiFi);
 
-      console.log('Wigle data foi consultado:', wigleDetails);
+      if (wigleDetails) {
+        // Atualize os dados com base na consulta do Wigle.net
+        newData.country = wigleDetails.country;
+        newData.region = wigleDetails.region;
+        newData.road = wigleDetails.road;
+        newData.city = wigleDetails.city;
+        newData.housenumber = wigleDetails.housenumber;
+        newData.postalcode = wigleDetails.postalcode;
+        newData.googleMapsLink = criarLinkGoogleMaps(wigleDetails);
+
+        console.log('Wigle data foi consultado:', wigleDetails);
+      }
+    } catch (error) {
+      console.error('Erro na consulta do Wigle.net:', error.message);
     }
   }
 
   // Ler o arquivo JSON existente (se existir)
   let data = [];
   try {
-    const rawData = fs.readFileSync('dados.json');
+    const rawData = fs.readFileSync('./dados.json');
     data = JSON.parse(rawData);
   } catch (error) {
     // Se o arquivo não existe, apenas continue com um array vazio
@@ -131,17 +102,6 @@ app.post('/receber-dados', async (req, res) => {
     existingData.ipInterno = newData.ipInterno;
     existingData.ipExterno = newData.ipExterno;
     existingData.lastUpdate = new Date(); // Atualize a data da última atualização
-
-    // Adicione os detalhes da consulta no Wigle.net aos dados existentes
-    existingData.country = newData.country;
-    existingData.region = newData.region;
-    existingData.road = newData.road;
-    existingData.city = newData.city;
-    existingData.housenumber = newData.housenumber;
-    existingData.postalcode = newData.postalcode;
-    existingData.lastGeolocationRequest = newData.lastGeolocationRequest;
-    // Adicione o link do Google Maps aos dados existentes
-    existingData.googleMapsLink = newData.googleMapsLink;
   } else {
     // Adicionar novo registro com um ID único
     const newMachine = {
@@ -151,16 +111,6 @@ app.post('/receber-dados', async (req, res) => {
       memoriaLivre: bytesParaGB(newData.memoriaLivre), // Converter para GB
       online: true,
       lastUpdate: new Date(),
-      // Adicione os detalhes da consulta no Wigle.net aos novos dados
-      country: newData.country,
-      region: newData.region,
-      road: newData.road,
-      city: newData.city,
-      housenumber: newData.housenumber,
-      postalcode: newData.postalcode,
-      lastGeolocationRequest: newData.lastGeolocationRequest,
-      // Adicione o link do Google Maps aos novos dados
-      googleMapsLink: newData.googleMapsLink,
     };
     // Adicione os IPs interno e externo ao novo registro
     newMachine.ipInterno = newData.ipInterno;
@@ -169,15 +119,15 @@ app.post('/receber-dados', async (req, res) => {
     data.push(newMachine);
   }
   // Salvar os dados atualizados no arquivo JSON
-  fs.writeFileSync('dados.json', JSON.stringify(data));
-  // Retornar os dados, incluindo o link do Google Maps
-  res.json({ linkgooglemaps: newData.googleMapsLink, message: 'Dados recebidos com sucesso!' });
+  fs.writeFileSync('./dados.json', JSON.stringify(data));
+  // Retornar uma resposta de sucesso
+  res.json({ message: 'Dados recebidos com sucesso!' });
 });
 
 // Endpoint para listar todos os dados
 app.get('/dados', (req, res) => {
   try {
-    const rawData = fs.readFileSync('dados.json');
+    const rawData = fs.readFileSync('./dados.json');
     const data = JSON.parse(rawData);
     res.json(data);
   } catch (error) {
@@ -189,7 +139,7 @@ app.get('/dados', (req, res) => {
 app.get('/dados/:id', (req, res) => {
   const id = req.params.id;
   try {
-    const rawData = fs.readFileSync('dados.json');
+    const rawData = fs.readFileSync('./dados.json');
     const data = JSON.parse(rawData);
     const matchingData = data.find((item) => item.id === id);
     if (matchingData) {
@@ -202,6 +152,46 @@ app.get('/dados/:id', (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Servidor rodando na porta http://localhost:${port}`);
+// Endpoint para consultar geolocalização manualmente
+app.get('/search-geo/:id', async (req, res) => {
+  const id = req.params.id;
+
+  // Ler o arquivo JSON existente (se existir)
+  let data = [];
+  try {
+    const rawData = fs.readFileSync('./dados.json');
+    data = JSON.parse(rawData);
+  } catch (error) {
+    // Se o arquivo não existe, apenas continue com um array vazio
+  }
+
+  // Encontre a máquina com base no ID
+  const machine = data.find((item) => item.id === id);
+
+  if (!machine) {
+    return res.status(404).json({ message: 'Máquina não encontrada.' });
+  }
+
+  const { bssidRedeWiFi, ssidRedeWiFi } = machine;
+
+  try {
+    // Realize a consulta ao Wigle.net manualmente
+    const wigleDetails = await consultarWigle(bssidRedeWiFi, ssidRedeWiFi);
+
+    if (wigleDetails.wigleData) {
+      // Adicione o campo googleMapsLink à resposta
+      wigleDetails.wigleData.googleMapsLink = criarLinkGoogleMaps(wigleDetails.wigleData);
+
+      return res.status(200).json({ message: 'Consulta ao Wigle.net concluída com sucesso.', data: wigleDetails.wigleData });
+    } else {
+      return res.status(404).json({ message: wigleDetails.error });
+    }
+  } catch (error) {
+    console.error('Erro na consulta manual ao Wigle.net:', error.message);
+    return res.status(500).json({ message: 'Erro na consulta manual ao Wigle.net.' });
+  }
 });
+
+  app.listen(port, () => {
+    console.log(`Servidor rodando na porta http://localhost:${port}`);
+  });
